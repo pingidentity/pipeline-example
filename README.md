@@ -19,6 +19,7 @@ The demonstration flow is as follows:
   - [Prerequisites](#prerequisites)
     - [Recommended](#recommended)
   - [Before you start](#before-you-start)
+  - [Development Lifecycle diagram](#development-lifecycle-diagram)
   - [Launch an Environment](#launch-an-environment)
       - [Ping Identity's Baseline Server Profiles](#ping-identitys-baseline-server-profiles)
   - [Details of the default environment deployment process](#details-of-the-default-environment-deployment-process)
@@ -27,7 +28,6 @@ The demonstration flow is as follows:
     - [Create a branch](#create-a-branch)
     - [Push to Prod](#push-to-prod)
       - [Use tags for final work](#use-tags-for-final-work)
-      - [Development Lifecycle diagram](#development-lifecycle-diagram)
   - [Cleanup](#cleanup)
   - [Bring Your Own Profiles](#bring-your-own-profiles)
   - [Adjust Default Deployment](#adjust-default-deployment)
@@ -97,6 +97,10 @@ The minimum required scopes are 'repo', 'read:org', 'workflow'.
 ✓ Configured git protocol
 ✓ Logged in as <User>
 ```
+
+## Development Lifecycle diagram
+![SDLC flow](./img/refPipeline.png "Development Flow")
+
 ## Launch an Environment
 Create a repository in your Github account from this template:
 - Click **Use This Template** at the top of this page to create a new repository based on these contents in your account.
@@ -116,7 +120,7 @@ git config user.name "Your Name"
 
 Start by deploying with the [baseline server-profile](https://github.com/pingidentity/pingidentity-server-profiles/tree/master/baseline) to get an environment running. Later in this guide, modifications from default will be discussed.
 
-First, initialize your environment.  The following script will prepare your local and remote repositories. 
+First, initialize your environment. The following script will prepare your local and remote repositories based on your inputs.
 
 ```
 ./scripts/initialize.sh
@@ -209,8 +213,6 @@ When you are finished, you can merge your branch into **prod**.  Doing so will l
 While working, merge to your development branch as frequently as needed.  When you are ready to publish a change, tag the branch. Pushing tags makes tracing the history easier and provides room for rollback.
 Note that creating a tag does not deploy anything into the cluster, but tags are a great way to mark a point in history as a point to which to roll back as necessary.
 
-#### Development Lifecycle diagram
-![SDLC flow](./img/refPipeline.png "Development Flow")
 ## Cleanup
 
 When you are finished, you can remove the deployed components from the environment by deleting the branch from your repository.  Doing so will trigger the **_DeleteEnv_** pipeline which removes all resources from the cluster.

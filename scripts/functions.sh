@@ -4,41 +4,52 @@ YELLOW='\033[0;33m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-# Set all Global script variables
-#   Every variable set in this section will be exported
-set -a
+
+
 ## Determine if this script is being run locally or from a pipeline:
+getLocalSecrets() {
 if test -z "${GITHUB_REPOSITORY}"; then
+  set -a
   GITHUB_REPOSITORY=$(git remote get-url origin)
   GITHUB_REPOSITORY="$(echo ${GITHUB_REPOSITORY##https://github.com/} | sed s/\.git//)"
   GITHUB_REF=$(git rev-parse --abbrev-ref HEAD)
-  REF="${GITHUB_REF}"
   # shellcheck source=local-secrets.sh
   test -f "scripts/local-secrets.sh" && . "scripts/local-secrets.sh" 
+  set +a
 fi
+}
 
-## Set Helm chart repo version to use
-test -z "${CHART_VERSION}" \
-  && CHART_VERSION="0.9.0"
-
-export DEFAULT_BRANCH=prod
-
-## Determine trigger
-if test -z ${REF} ; then 
+## Determine environment based on trigger
+getEnv() {
   ### This pattern will match if the workflow trigger is prod
   if test "${GITHUB_REF}" != "${GITHUB_REF%%"${DEFAULT_BRANCH}"}" ; then
-  REF=prod
+  ENV="${ENV_PREFIX}prod"
   else
   ### This pattern will match if the workflow trigger is a branch
-  REF=$(echo "${GITHUB_REF}" | sed -e "s#refs/heads/##g")
+  ENV="${ENV_PREFIX}$(echo "${GITHUB_REF}" | sed -e "s#refs/heads/##g")"
   fi
-fi
-set +a
+  SERVER_PROFILE_BRANCH="$(echo "${GITHUB_REF}" | sed -e "s#refs/heads/##g")"
+  echo "${YELLOW}INFO: Environment is: ${ENV}${NC}"
+  export ENV SERVER_PROFILE_BRANCH
+}
+
+getNamespace() {
+  # Set namespace based on NS_PER_ENV
+  K8S_NAMESPACE=$(kubectl config view --minify -o jsonpath='{..namespace}')
+  if test "${NS_PER_ENV}" = "true" ; then
+    test -z "${ENV}" && echo "${RED} ENV not found exiting..${NC}" && exit 1
+    K8S_NAMESPACE="${ENV}"
+    kubectl get ns "${K8S_NAMESPACE}" >/dev/null 2>&1
+    test $? -ne 0 && kubectl create ns "${K8S_NAMESPACE}"
+    ## Just in case we forget to put namespace on a deploy command
+    kubectl config set-context --current --namespace="${K8S_NAMESPACE}"
+  fi
+}
+
 # End: Set all Global script variables
 
-echo "${YELLOW}INFO: Environment is: ${REF}${NC}"
 getGlobalVars() {
-  kubectl get cm "${REF}-global-env-vars" -o=jsonpath='{.data}' | jq -r '. | to_entries | .[] | .key + "=" + .value + ""'
+  kubectl get cm "${ENV}-global-env-vars" -o=jsonpath='{.data}' | jq -r '. | to_entries | .[] | .key + "=" + .value + ""'
 }
 
 # prep for expandFiles
@@ -48,12 +59,15 @@ getEnvKeys() {
 
 # process all files that end in .subst to hardcoded files for deployment
 envsubstFiles() {
+
     while true ; do
+      echo "${GITHUB_REF}"
       test -z "${1}" && break
       _expandPath="${1}"
       echo "  Processing templates"
 
       find "${_expandPath}" -type f -iname "*.yaml" > tmpFileList
+      rm expandedFiles
       while IFS= read -r template; do
           echo "    t - ${template}"
           _templateDir="$(dirname ${template})"

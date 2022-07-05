@@ -35,7 +35,11 @@ while ! test -z ${1} ; do
 done
 
 # Source global functions and variables
-. "${CWD}/lib.sh"
+. "${CWD}/vars.sh"
+. "${CWD}/functions.sh"
+getLocalSecrets
+getEnv
+getNamespace
 
 # Validate Pre-reqs
 _missingTool="false"
@@ -67,16 +71,16 @@ envsubstFiles "helm" "manifest"
 # START: Deploy
 
 ## Apply all evaluated kubernetes manifest files
-find "manifest" -type f -regex ".*final$" >> k8stmp
+find "manifest" -type f -regex ".*final$" > k8stmp
 while IFS= read -r k8sFile; do
-  kubectl apply -f "$k8sFile" $_dryRun -o yaml
+  kubectl apply -f "$k8sFile" -n "${K8S_NAMESPACE}" $_dryRun
 done < k8stmp
 test -z "${_dryRun}" && rm k8stmp
 
 ## Identify possible values.yaml files
 VALUES_FILE=${VALUES_FILE:=helm/values.yaml.final}
 VALUES_DEV_FILE=${VALUES_DEV_FILE:=helm/values.dev.yaml.final}
-test "${REF}" != "prod" && _valuesDevFile="-f ${VALUES_DEV_FILE}"
+test "${ENV}" != "prod" && _valuesDevFile="-f ${VALUES_DEV_FILE}"
 
 ## Helm Deploy
 echo "${GREEN}INFO: Running Helm upgrade${NC}"
@@ -84,9 +88,9 @@ echo "${GREEN}INFO: Running Helm upgrade${NC}"
 _deployUTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 helm upgrade --install \
-  "${REF}" pingidentity/ping-devops \
+  "${ENV}" pingidentity/ping-devops \
   -f "${VALUES_FILE}" ${_valuesDevFile}  \
-  --version "${CHART_VERSION}" $_dryRun
+  --version "${CHART_VERSION}" -n "${K8S_NAMESPACE}" $_dryRun
 
 ## For Statefulsets that failed previously, the crashing pod must be deleted to pick up new changes
 ##    this is per: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#forced-rollback
@@ -95,9 +99,9 @@ helm upgrade --install \
 ##  - Are part of a StatefulSet
 ##  - Are not ready
 ##  - Have restarted more than twice
-_crashingPods=$(kubectl get pods -l app.kubernetes.io/instance="${REF}" -o go-template='{{range $index, $element := .items}}{{range $element.metadata.ownerReferences}}{{if eq .kind "StatefulSet"}}{{range $element.status.containerStatuses}}{{if and (gt .restartCount 2) (not .ready) }}{{$element.metadata.name}}{{"\n"}}{{end}}{{end}}{{end}}{{end}}{{end}}')
+_crashingPods=$(kubectl get pods -l app.kubernetes.io/instance="${ENV}" -n "${K8S_NAMESPACE}" -o go-template='{{range $index, $element := .items}}{{range $element.metadata.ownerReferences}}{{if eq .kind "StatefulSet"}}{{range $element.status.containerStatuses}}{{if and (gt .restartCount 2) (not .ready) }}{{$element.metadata.name}}{{"\n"}}{{end}}{{end}}{{end}}{{end}}{{end}}')
 test ! -z "${_crashingPods}" \
-  && kubectl delete pod $(printf "%s " $_crashingPods) --force --grace-period=0 "${_dryRun}"
+  && kubectl delete pod $(printf "%s " $_crashingPods) --force --grace-period=0 -n "${K8S_NAMESPACE}" "${_dryRun}"
 
 # Finish by cleaning up hardcoded files if not a dry-run
 test -z "${_dryRun}" && cleanExpandedFiles
@@ -114,18 +118,18 @@ if test -z $_dryRun ; then
 
   ## Collect previous helm release info to show in case of failure
   test ! -d tmp && mkdir tmp
-  revCurrent=$(helm ls --filter "${REF}" -o json | jq -r '.[0].revision')
+  revCurrent=$(helm ls --filter "${ENV}" -o json -n "${K8S_NAMESPACE}"| jq -r '.[0].revision')
   revPrevious=$(( revCurrent - 1 ))
-  helm diff revision "${REF}" $revPrevious $revCurrent --no-color -C 0 > tmp/helmdiff.txt
+  helm diff revision "${ENV}" $revPrevious $revCurrent -n "${K8S_NAMESPACE}" --no-color -C 0 > tmp/helmdiff.txt
 
   ## Watch helm release for pods going to crashloop
   echo "${YELLOW}INFO: Watching Release, DO NOT STOP SCRIPT${NC}"
   while test ${_timeoutElapsed} -lt ${_timeout} ; do
     sleep 6
     ## watch pods that are only part of this release upgrade:
-    # kubectl get pods -l app.kubernetes.io/instance="${REF}" -o go-template='{{range $index, $element := .items}}{{range .status.containerStatuses}}{{if not .ready}}{{$element.metadata.name}} {{$element.metadata.creationTimestamp}}{{"\n"}}{{end}}{{end}}{{end}}'
+    # kubectl get pods -l app.kubernetes.io/instance="${ENV}" -o go-template='{{range $index, $element := .items}}{{range .status.containerStatuses}}{{if not .ready}}{{$element.metadata.name}} {{$element.metadata.creationTimestamp}}{{"\n"}}{{end}}{{end}}{{end}}'
 
-    if test $(kubectl get pods -l app.kubernetes.io/instance="${REF}" -o go-template='{{range $index, $element := .items}}{{range .status.containerStatuses}}{{if not .ready}}{{$element.metadata.name}} {{$element.metadata.creationTimestamp}}{{"\n"}}{{end}}{{end}}{{end}}' | awk '{if ($2 >= "'$(echo "$_deployUTC")'") { print $1 }}' | wc -l ) = 0 ; then
+    if test $(kubectl get pods -l app.kubernetes.io/instance="${ENV}" -n "${K8S_NAMESPACE}" -o go-template='{{range $index, $element := .items}}{{range .status.containerStatuses}}{{if not .ready}}{{$element.metadata.name}} {{$element.metadata.creationTimestamp}}{{"\n"}}{{end}}{{end}}{{end}}' | awk '{if ($2 >= "'$(echo "$_deployUTC")'") { print $1 }}' | wc -l ) = 0 ; then
       _readyCount=$(( _readyCount+1 ))
       sleep 4
     else 
@@ -133,7 +137,7 @@ if test -z $_dryRun ; then
       ##  - Started after this helm upgrade
       ##  - not ready
       ##  - and have more than 2 restarts
-      _crashingPods=$(kubectl get pods -l app.kubernetes.io/instance="${REF}" -o go-template='{{range $index, $element := .items}}{{range .status.containerStatuses}}{{if and (gt .restartCount 2) (not .ready) }}{{$element.metadata.name}} {{$element.metadata.creationTimestamp}}{{"\n"}}{{end}}{{end}}{{end}}' | awk '{if ($2 >= "'$(echo "$_deployUTC")'") { print $1 }}')
+      _crashingPods=$(kubectl get pods -l app.kubernetes.io/instance="${ENV}" -n "${K8S_NAMESPACE}" -o go-template='{{range $index, $element := .items}}{{range .status.containerStatuses}}{{if and (gt .restartCount 2) (not .ready) }}{{$element.metadata.name}} {{$element.metadata.creationTimestamp}}{{"\n"}}{{end}}{{end}}{{end}}' | awk '{if ($2 >= "'$(echo "$_deployUTC")'") { print $1 }}')
       _numCrashing=$(printf "${_crashingPods}" | wc -c)
       ## Recognize failed release via extended crashloop
       if test $_numCrashing -ne 0 ; then

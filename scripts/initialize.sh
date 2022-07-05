@@ -3,7 +3,8 @@
 CWD=$(dirname "$0")
 
 # Source global functions and variables
-. "${CWD}/lib.sh"
+. "${CWD}/vars.sh"
+. "${CWD}/functions.sh"
 
 usage ()
 {
@@ -45,17 +46,67 @@ test $_missingTool = "true" && exit_usage "Missing tool(s)"
 _generateKubeconfig() {
 
 _currentNamespace=$(kubectl config view --minify -o jsonpath='{..namespace}')
-read -p "Which Kubernetes namespace to use? (Enter for ${_currentNamespace})"
-K8S_NAMESPACE="${REPLY:-${_currentNamespace}}"
-echo "Using Namespace: ${K8S_NAMESPACE}"
-echo "Generating Kubeconfig: ${K8S_NAMESPACE}.."
+echo "Use separate K8s namespace per environment? (**Requires cluster admin access**)"
+read -p "y/n - Default (n):"
+if test "${REPLY}" = "y" ; then
+  _k8sNamespace='default'
+  echo "Creating ping-devops-admin serviceaccount in ${_k8sNamespace}"
+  echo "" >> "${CWD}/vars.sh"
+  echo 'export NS_PER_ENV="true"' >> "${CWD}/vars.sh"
+  git add "${CWD}/vars.sh" >/dev/null 2>&1
+  git commit -m "1:1 K8sNamespace:Environment" >/dev/null 2>&1
 
 cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: ping-devops-admin
-  namespace: ${K8S_NAMESPACE}
+  namespace: ${_k8sNamespace}
+---
+apiVersion: v1
+items:
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: ping-devops-cluster-admin
+  rules:
+  - apiGroups:
+    - '*'
+    resources:
+    - '*'
+    verbs:
+    - '*'
+kind: List
+metadata:
+  resourceVersion: ""
+  selfLink: ""
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ping-devops-cluster-admin
+roleRef:
+  kind: ClusterRole
+  name: ping-devops-cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: ping-devops-admin
+  namespace: ${_k8sNamespace}
+EOF
+else
+  echo "Using one namespace for all environments.."
+  read -p "Which Kubernetes namespace to use? (Enter for ${_currentNamespace})"
+  _k8sNamespace="${REPLY:-${_currentNamespace}}"
+  echo "Using Namespace: ${_k8sNamespace}"
+  echo "Generating Kubeconfig: ${_k8sNamespace}.."
+
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ping-devops-admin
+  namespace: ${_k8sNamespace}
 ---
 apiVersion: v1
 items:
@@ -63,7 +114,7 @@ items:
   kind: Role
   metadata:
     name: namespace-admin
-    namespace: ${K8S_NAMESPACE}
+    namespace: ${_k8sNamespace}
   rules:
   - apiGroups:
     - '*'
@@ -89,8 +140,10 @@ subjects:
   name: ping-devops-admin
 EOF
 
-USER_TOKEN_NAME=$(kubectl -n ${K8S_NAMESPACE} get serviceaccount ping-devops-admin -o=jsonpath='{.secrets[0].name}')
-USER_TOKEN_VALUE=$(kubectl -n ${K8S_NAMESPACE} get secret/${USER_TOKEN_NAME} -o=go-template='{{.data.token}}' | base64 --decode)
+fi
+
+USER_TOKEN_NAME=$(kubectl -n ${_k8sNamespace} get serviceaccount ping-devops-admin -o=jsonpath='{.secrets[0].name}')
+USER_TOKEN_VALUE=$(kubectl -n ${_k8sNamespace} get secret/${USER_TOKEN_NAME} -o=go-template='{{.data.token}}' | base64 --decode)
 CURRENT_CONTEXT=$(kubectl config current-context)
 CURRENT_CLUSTER=$(kubectl config view --raw -o=go-template='{{range .contexts}}{{if eq .name "'''${CURRENT_CONTEXT}'''"}}{{ index .context "cluster" }}{{end}}{{end}}')
 CLUSTER_CA=$(kubectl config view --raw -o=go-template='{{range .clusters}}{{if eq .name "'''${CURRENT_CLUSTER}'''"}}"{{with index .cluster "certificate-authority-data" }}{{.}}{{end}}"{{ end }}{{ end }}')
@@ -105,7 +158,7 @@ contexts:
   context:
     cluster: ${CURRENT_CONTEXT}
     user: ping-devops-admin
-    namespace: ${K8S_NAMESPACE}
+    namespace: ${_k8sNamespace}
 clusters:
 - name: ${CURRENT_CONTEXT}
   cluster:
@@ -166,7 +219,6 @@ if test "${REPLY}" != "n"; then
   cd -  >/dev/null 2>&1 || exit
   git add profiles >/dev/null 2>&1
   git commit -m "Add Ping Identity Baseline" >/dev/null 2>&1
-  git push origin
 else
   mkdir profiles
   echo "${YELLOW} Be sure to fill out the profiles folder..${NC}"
@@ -175,4 +227,5 @@ fi
 _setDevopsSecret
 _generateKubeconfig
 
+git push origin
 echo "${GREEN} Initialization completed successfully.${NC}"

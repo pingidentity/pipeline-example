@@ -2,32 +2,32 @@
 
 pingaccess-admin:
   envs:
-    SERVER_PROFILE_ADMIN_BRANCH: "${REF}"
-    SERVER_PROFILE_BRANCH: "${REF}"
+    SERVER_PROFILE_ADMIN_BRANCH: "${GITHUB_REF}"
+    SERVER_PROFILE_BRANCH: "${GITHUB_REF}"
 
 pingaccess-engine:
   envs:
-    SERVER_PROFILE_BRANCH: "${REF}"
+    SERVER_PROFILE_BRANCH: "${GITHUB_REF}"
 
 
 pingfederate-admin:
   envs:
-    SERVER_PROFILE_ADMIN_BRANCH: "${REF}"
-    SERVER_PROFILE_BRANCH: "${REF}"
+    SERVER_PROFILE_ADMIN_BRANCH: "${GITHUB_REF}"
+    SERVER_PROFILE_BRANCH: "${GITHUB_REF}"
 
 pingfederate-engine:
   envs:
-    SERVER_PROFILE_BRANCH: "${REF}"
+    SERVER_PROFILE_BRANCH: "${GITHUB_REF}"
 
 pingdirectory:
   envs:
-    SERVER_PROFILE_BRANCH: "${REF}"
+    SERVER_PROFILE_BRANCH: "${GITHUB_REF}"
 
 pingdataconsole:
   envs:
-    SERVER_PROFILE_BRANCH: "${REF}"
+    SERVER_PROFILE_BRANCH: "${GITHUB_REF}"
 
 pingauthorize:
   enabled: true
   envs:
-    SERVER_PROFILE_BRANCH: "${REF}"
+    SERVER_PROFILE_BRANCH: "${GITHUB_REF}"
